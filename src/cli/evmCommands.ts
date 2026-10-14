@@ -6,6 +6,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
 export const registerEvmCommands = (
@@ -17,7 +18,7 @@ export const registerEvmCommands = (
   cli.command(evmInterfaceModule.cliCommand, {
     description: "Infer interface candidates from explicit local EVM bytecode",
     args: z.object({
-      path: z.string().describe("Local bytecode carrier"),
+      path: localPathStringSchema.describe("Local bytecode carrier"),
       encoding: z
         .enum(["raw", "hex"])
         .describe("Selected carrier representation"),
