@@ -804,6 +804,7 @@ export class CutterBridgeClient {
         rejectRequest("Cutter bridge request timed out");
         connection.destroy();
       }, 25_000);
+      timer.unref();
       const onAbort = (): void => {
         rejectRequest("Cutter bridge request was cancelled");
         connection.destroy();
