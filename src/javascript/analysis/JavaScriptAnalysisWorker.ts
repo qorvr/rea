@@ -591,8 +591,24 @@ export class JavaScriptAnalysisWorker {
         OPERATION,
         "JavaScript static checkpoint digest does not match",
       );
-    const value: unknown = JSON.parse(text);
-    const facts = javaScriptWorkerStaticAnalysisSchema.parse(value);
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch (cause) {
+      throw new AnalysisOutputError(
+        OPERATION,
+        "JavaScript static checkpoint contains malformed JSON",
+        { cause },
+      );
+    }
+    const parsed = javaScriptWorkerStaticAnalysisSchema.safeParse(value);
+    if (!parsed.success)
+      throw new AnalysisOutputError(
+        OPERATION,
+        "JavaScript static checkpoint does not conform to static analysis schema",
+        { cause: parsed.error },
+      );
+    const facts = parsed.data;
     const remaining = this.#remainingTotalResultBudget();
     const retainedBytes = bytes * STATIC_CHECKPOINT_RETENTION_EXPANSION;
     this.#parentCapacityExhausted = retainedBytes > remaining;
