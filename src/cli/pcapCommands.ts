@@ -11,6 +11,7 @@ import type { PcapOperation } from "../domain/pcap/pcapAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Expose the same explicit pcap requests through one-shot CLI commands. */
 export const registerPcapCommands = (
@@ -56,10 +57,9 @@ export const registerPcapCommands = (
     description:
       "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Local pcap or pcapng capture file to inspect"),
+      path: localPathStringSchema.describe(
+        "Local pcap or pcapng capture file to inspect",
+      ),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.inspectPcapCapture, "inspect_pcap_capture", {
