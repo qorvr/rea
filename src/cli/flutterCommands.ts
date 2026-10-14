@@ -10,6 +10,7 @@ import type { FlutterOperation } from "../domain/flutter/flutterBuildAnalysis.js
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** One flutter command: CLI shape and the request it produces. */
 interface FlutterCommandSpec {
@@ -36,7 +37,7 @@ export const registerFlutterCommands = (
       description:
         "Identify a Flutter build's Dart snapshot hash and engine facts by pure APK parsing",
       argumentSchema: z.object({
-        path: z.string().min(1).describe("Local APK file to inspect"),
+        path: localPathStringSchema.describe("Local APK file to inspect"),
       }),
       operation: "identify_flutter_build",
       toInput: (arguments_) => arguments_,
@@ -46,16 +47,19 @@ export const registerFlutterCommands = (
       description:
         "Inspect one ABI's Dart AOT snapshot: sections, headers, and the string pool",
       argumentSchema: z.object({
-        path: z
-          .string()
-          .min(1)
-          .describe("Local APK carrying a Flutter payload"),
+        path: localPathStringSchema.describe(
+          "Local APK carrying a Flutter payload",
+        ),
       }),
       optionSchema: z.object({
         abi: z
           .string()
           .min(2)
           .max(16)
+          .regex(
+            /^[a-z0-9_\x2d]+$/u,
+            "ABI name as it appears under lib/, e.g. arm64-v8a",
+          )
           .optional()
           .describe("ABI under lib/ to inspect; defaults to the preferred one"),
       }),
