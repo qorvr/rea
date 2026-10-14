@@ -129,11 +129,13 @@ export class HopperRequestQueue {
       this.#queue.push(entry);
       if (onAbort !== undefined)
         options.signal?.addEventListener("abort", onAbort, { once: true });
-      if (timeoutMs !== undefined)
+      if (timeoutMs !== undefined) {
         entry.deadline = setTimeout(
           () => this.#cancel(entry, this.#timeoutError(entry, timeoutMs)),
           timeoutMs,
         );
+        entry.deadline.unref();
+      }
       if (this.#active !== undefined || this.#queue.length > 1)
         this.#report(
           entry,
@@ -265,6 +267,7 @@ export class HopperRequestQueue {
         `${entry.method} is still running in Hopper (${String(elapsed)} ms elapsed)`,
       );
     }, 1_000);
+    entry.heartbeat.unref();
     try {
       entry.transmitted = true;
       this.send(
