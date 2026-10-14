@@ -7,6 +7,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve caller paths and inspect embedded Rust dependencies through the shared workflow. */
 export const registerRustCommands = (
@@ -18,7 +19,9 @@ export const registerRustCommands = (
     description:
       "Inspect an embedded cargo-auditable Rust dependency list without target execution",
     args: z.object({
-      path: z.string().describe("Local ELF, PE or thin Mach-O image"),
+      path: localPathStringSchema.describe(
+        "Local ELF, PE or thin Mach-O image",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
