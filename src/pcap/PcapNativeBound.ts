@@ -1,4 +1,4 @@
-import { access, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -40,6 +40,10 @@ export const preparePcapNativeBound = async (
       throw new Error(`${PRLIMIT_COMMAND_ENV} must be absolute.`);
     const limiter = await realpath(configured);
     await access(limiter, constants.X_OK);
+    if (!(await stat(limiter)).isFile())
+      throw new Error(
+        "Configured prlimit must be a regular executable file, not a directory.",
+      );
     const limits = await resources.readLimits({
       address_space_bytes: 1024 ** 3,
       file_bytes: 64 * 1024 ** 2,
