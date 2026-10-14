@@ -195,7 +195,11 @@ export const registerReverseEngineeringCommands = (
       command: z
         .string()
         .min(1)
-        .describe("One unrestricted GDB console command."),
+        .describe("One unrestricted GDB console command.")
+        .refine(
+          (value) => !value.includes("\0"),
+          "NUL bytes are not permitted",
+        ),
     }),
     options: z.object({
       inferiorTty: z

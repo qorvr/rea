@@ -890,6 +890,16 @@ export class GdbSessionManager {
           },
         ]),
       );
+    if (command.includes("\0"))
+      return err(
+        new AnalysisInputError("gdb_console", undefined, [
+          {
+            path: ["command"],
+            reason: "invalid_value",
+            message: "NUL bytes are not permitted",
+          },
+        ]),
+      );
     if (signal?.aborted) return err(new AnalysisCancelledError("gdb_console"));
     try {
       const completed = await this.#serialize(
