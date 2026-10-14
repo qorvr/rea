@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 
+/** Android class and method identifiers cannot be empty or contain NUL bytes. */
+export const androidIdentifierSchema = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Android identifiers cannot contain NUL");
+
 const target = {
   path: localPathStringSchema.describe(
     "Local APK path; the target is never executed",
@@ -8,7 +14,9 @@ const target = {
 };
 const classTarget = {
   ...target,
-  class_name: z.string().min(1).describe("Exact fully qualified class name"),
+  class_name: androidIdentifierSchema.describe(
+    "Exact fully qualified class name",
+  ),
 };
 
 /** Caller intent for static Android inspection, independent of its engine. */
@@ -18,12 +26,13 @@ export const androidInputSchemas = {
     ...target,
     query: z
       .string()
+      .regex(/^[^\x00]*$/u, "Search query cannot contain NUL")
       .describe("Case-sensitive class-name substring; empty lists all classes"),
   }),
   inspect_android_class: z.strictObject(classTarget),
   inspect_android_method: z.strictObject({
     ...classTarget,
-    method_name: z.string().min(1),
+    method_name: androidIdentifierSchema,
     overload_index: z
       .number()
       .int()
@@ -35,9 +44,7 @@ export const androidInputSchemas = {
   }),
   trace_android_references: z.strictObject({
     ...classTarget,
-    method_name: z
-      .string()
-      .min(1)
+    method_name: androidIdentifierSchema
       .optional()
       .describe(
         "Omit for class references; select ambiguous methods with overload_index",
