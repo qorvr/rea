@@ -6,6 +6,8 @@ import { logCliCommand } from "../cliLogging.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { sqliteIdentifierSchema } from "../domain/sqlite/sqliteDatabase.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -21,15 +23,14 @@ export const registerSqliteCommands = (
     description:
       "Inspect SQLite schema and optional ordinary-table rows from a local snapshot",
     args: z.object({
-      path: z.string().describe("Local SQLite database snapshot"),
+      path: localPathStringSchema.describe("Local SQLite database snapshot"),
     }),
     options: z.object({
-      table: z
-        .string()
+      table: sqliteIdentifierSchema
         .optional()
         .describe("Exact ordinary table name to read"),
       column: z
-        .array(z.string())
+        .array(sqliteIdentifierSchema)
         .optional()
         .describe(
           "Repeat to select exact row columns in the requested order; requires table",

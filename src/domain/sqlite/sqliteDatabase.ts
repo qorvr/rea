@@ -21,20 +21,25 @@ const artifactSchema = z.strictObject({
   bytes: nonnegative,
 });
 
+/** SQLite table and column identifiers cannot be empty or contain NUL bytes. */
+export const sqliteIdentifierSchema = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "SQLite identifiers cannot contain NUL");
+
 /** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
 export const inspectSqliteDatabaseInputSchema = z
   .strictObject({
     path: localPathStringSchema.describe(
       "Absolute path to an offline SQLite database snapshot",
     ),
-    table: z
-      .string()
+    table: sqliteIdentifierSchema
       .optional()
       .describe(
         "Exact ordinary table name; views and virtual/shadow tables are not executed",
       ),
     columns: z
-      .array(z.string())
+      .array(sqliteIdentifierSchema)
       .min(1)
       .optional()
       .describe(
