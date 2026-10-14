@@ -9,6 +9,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve all caller-selected artifact paths through the shared workflow. */
 export const registerWasmCommands = (
@@ -43,15 +44,17 @@ export const registerWasmCommands = (
   cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",
     args: z.object({
-      path: z.string().describe("Local WASM artifact"),
+      path: localPathStringSchema.describe("Local WASM artifact"),
     }),
     options: z.object({
       glue_paths: z
-        .array(z.string())
+        .array(localPathStringSchema)
+        .max(16)
         .optional()
         .describe("Selected local JavaScript glue paths"),
       candidate_paths: z
-        .array(z.string())
+        .array(localPathStringSchema)
+        .max(16)
         .optional()
         .describe("Explicit local WASM candidates"),
     }),
