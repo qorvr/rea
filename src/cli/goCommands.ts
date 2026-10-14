@@ -7,6 +7,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve caller paths and inspect static build metadata through the shared workflow. */
 export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
@@ -14,7 +15,9 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
     description:
       "Inspect embedded Go compiler, modules and build settings without target execution",
     args: z.object({
-      path: z.string().describe("Local ELF, PE or thin Mach-O image"),
+      path: localPathStringSchema.describe(
+        "Local ELF, PE or thin Mach-O image",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation(async (signal) => {
