@@ -431,7 +431,8 @@ export const createIdaMcpConnection = (
           fetch: diagnosticFetch(redactor),
         });
   // Keep a bounded diagnostic tail for genuine failures; never persist ambient variables.
-  if (transport instanceof StdioClientTransport)
+  if (transport instanceof StdioClientTransport) {
+    transport.stderr?.on("error", () => {});
     transport.stderr?.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       const combined = Buffer.concat([stderr, chunk]);
@@ -439,6 +440,7 @@ export const createIdaMcpConnection = (
         combined.subarray(Math.max(0, combined.length - 16_384)),
       );
     });
+  }
   return {
     async connect() {
       await client
