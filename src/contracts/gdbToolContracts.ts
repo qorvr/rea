@@ -21,6 +21,14 @@ const gdbCommandResult = z.strictObject({
   completion_status: z.enum(["complete", "unknown"]),
 });
 
+export const gdbConsoleInputSchema = z.strictObject({
+  session_id: sessionId,
+  command: z
+    .string()
+    .min(1)
+    .refine((value) => !value.includes("\0"), "NUL bytes are not permitted"),
+});
+
 /** Persistent GDB/MI session contracts hosted by the existing REA MCP server. */
 export const GDB_TOOL_CONTRACTS = [
   {
@@ -48,10 +56,7 @@ export const GDB_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "Run one unrestricted GDB CLI command through MI interpreter-exec console and return raw MI, console, target, and log records inline with Evidence. A command timeout preserves collected records with completion_status unknown and stops the owned debugger session. Commands can execute shell, alter target state, access files, and use network. Closing the debugger never implies target termination. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
-    inputSchema: z.strictObject({
-      session_id: sessionId,
-      command: z.string().min(1),
-    }),
+    inputSchema: gdbConsoleInputSchema,
     outputSchema: evidenceResultOf(gdbCommandResult),
     examples: [
       {
