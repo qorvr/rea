@@ -12,6 +12,7 @@ import type { Result } from "../domain/result.js";
 import { err } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { logCliCommand } from "../cliLogging.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -107,10 +108,9 @@ export const registerReverseEngineeringCommands = (
     description:
       "Inspect a local artifact with GNU objdump and retain its raw output as Evidence",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Path to the local artifact to inspect."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to inspect.",
+      ),
       operation: z
         .enum([
           "file_headers",
@@ -172,10 +172,9 @@ export const registerReverseEngineeringCommands = (
   cli.command(CLI_COMMANDS.executeRizinCommand, {
     description: "Execute one Rizin command against a local artifact",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Path to the local artifact to analyze."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to analyze.",
+      ),
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     run: ({ args }) =>
@@ -198,12 +197,9 @@ export const registerReverseEngineeringCommands = (
         .describe("One unrestricted GDB console command."),
     }),
     options: z.object({
-      inferiorTty: z
-        .string()
-        .min(1)
-        .describe(
-          "Caller-selected durable TTY for output from a live GDB inferior.",
-        ),
+      inferiorTty: localPathStringSchema.describe(
+        "Caller-selected durable TTY for output from a live GDB inferior.",
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -288,7 +284,9 @@ export const registerReverseEngineeringCommands = (
     description:
       "Run one unrestricted Rizin debugger command in an ephemeral session",
     args: z.object({
-      path: z.string().min(1).describe("Path to the local artifact to debug."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to debug.",
+      ),
       command: z
         .string()
         .min(1)
@@ -296,10 +294,9 @@ export const registerReverseEngineeringCommands = (
         .refine((value) => !/[\r\n]/u.test(value)),
     }),
     options: z.object({
-      inferiorTty: z
-        .string()
-        .min(1)
-        .describe("Caller-selected Linux TTY for inferior stdout and stderr."),
+      inferiorTty: localPathStringSchema.describe(
+        "Caller-selected Linux TTY for inferior stdout and stderr.",
+      ),
       backend: z
         .string()
         .min(1)
