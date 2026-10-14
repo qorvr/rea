@@ -17,8 +17,12 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { err, type Result } from "../domain/result.js";
-import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "../contracts/fridaToolContracts.js";
+import {
+  FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION,
+  fridaStringArgumentSchema,
+} from "../contracts/fridaToolContracts.js";
 import { isValidFridaRemoteAddress } from "../contracts/fridaRemoteAddress.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -72,6 +76,7 @@ export const registerFridaCommands = (
     certificate: z
       .string()
       .min(1)
+      .regex(/^[^\x00]*$/u, "Certificate cannot contain NUL")
       .optional()
       .describe("Remote TLS certificate"),
     origin: z.string().min(1).optional().describe("Remote connection origin"),
@@ -186,13 +191,11 @@ export const registerFridaCommands = (
           .optional()
           .describe("Frida device identifier"),
         script: z.string().optional().describe("Inline JavaScript to load"),
-        scriptFile: z
-          .string()
-          .min(1)
+        scriptFile: localPathStringSchema
           .optional()
           .describe("Path to JavaScript source file"),
         argument: z
-          .array(z.string())
+          .array(fridaStringArgumentSchema)
           .optional()
           .describe("Arguments passed to a spawned target"),
         durationMs: z

@@ -9,12 +9,21 @@ import { isValidFridaRemoteAddress } from "./fridaRemoteAddress.js";
 export const FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION =
   "Remote keepalive interval in seconds";
 
+/** Frida argument strings cannot contain NUL bytes. */
+export const fridaStringArgumentSchema = z
+  .string()
+  .regex(/^[^\x00]*$/u, "Frida argument cannot contain NUL");
+
 const remoteConnection = z.strictObject({
   address: z.string().min(1).max(2048).refine(isValidFridaRemoteAddress, {
     message: "Expected a Frida host address, optionally followed by a port",
   }),
   token: z.string().min(1).optional(),
-  certificate: z.string().min(1).optional(),
+  certificate: z
+    .string()
+    .min(1)
+    .regex(/^[^\x00]*$/u, "Certificate cannot contain NUL")
+    .optional(),
   origin: z.string().min(1).optional(),
   keepalive_interval: z
     .number()
@@ -124,7 +133,7 @@ export const FRIDA_TOOL_CONTRACTS = [
         ...deviceSelector.shape,
         pid: z.number().int().positive().optional(),
         program: localPathStringSchema.optional(),
-        argv: z.array(z.string()).optional(),
+        argv: z.array(fridaStringArgumentSchema).optional(),
       })
       .refine(
         (value) =>
@@ -273,7 +282,7 @@ export const FRIDA_TOOL_CONTRACTS = [
         ...deviceSelector.shape,
         pid: z.number().int().positive().optional(),
         program: localPathStringSchema.optional(),
-        argv: z.array(z.string()).optional(),
+        argv: z.array(fridaStringArgumentSchema).optional(),
         source_kind: z.enum(["inline", "file"]),
         source: z.string().optional(),
         path: localPathStringSchema.optional(),
