@@ -476,6 +476,12 @@ export class RizinDebugSessionManager {
     launched.process.stdout?.on("data", (chunk: Buffer | string) =>
       this.#receive(session, Buffer.from(chunk)),
     );
+    launched.process.stdout?.on("error", (cause: Error) =>
+      this.#failProtocol(
+        session,
+        `Rizin stdout stream failed: ${cause.message}`,
+      ),
+    );
     launched.process.stdin?.on("error", (cause: Error) =>
       this.#failProtocol(
         session,
