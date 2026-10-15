@@ -22,6 +22,7 @@ import type { Logger } from "pino";
 import { isReferenceSourceImportCliFailure } from "./referenceSourceImportStatus.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 export const registerUtilityCommands = (
   cli: CliInstance,
@@ -86,7 +87,7 @@ const registerNativeUiCommands = (
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   const pathArgument = z.object({
-    path: z.string().describe("Local native executable or app path"),
+    path: localPathStringSchema.describe("Local native executable or app path"),
   });
   cli.command(CLI_COMMANDS.observeNativeUi, {
     description:
@@ -182,7 +183,9 @@ const registerNativeCommands = (
   ] as const) {
     cli.command(command, {
       description: `Run ${tool} without launching Hopper`,
-      args: z.object({ path: z.string().describe("Mach-O or app path") }),
+      args: z.object({
+        path: localPathStringSchema.describe("Mach-O or app path"),
+      }),
       run: ({ args }) =>
         logCliCommand(logger, command, () =>
           runProviderAnalysis(args.path, tool, {}, logger),
@@ -191,10 +194,11 @@ const registerNativeCommands = (
   }
   cli.command(CLI_COMMANDS.inspectPlist, {
     description: "Parse app plist metadata without launching Hopper",
-    args: z.object({ path: z.string().describe("App or Mach-O path") }),
+    args: z.object({
+      path: localPathStringSchema.describe("App or Mach-O path"),
+    }),
     options: z.object({
-      relativePath: z
-        .string()
+      relativePath: localPathStringSchema
         .optional()
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
@@ -215,7 +219,9 @@ const registerNativeCommands = (
   cli.command(CLI_COMMANDS.demangleSwift, {
     description: "Demangle Swift symbols without Hopper",
     args: z.object({
-      path: z.string().describe("Artifact path used for evidence identity"),
+      path: localPathStringSchema.describe(
+        "Artifact path used for evidence identity",
+      ),
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
     run: ({ args }) =>
@@ -238,9 +244,9 @@ const registerReferenceSourceCommand = (
   cli.command(CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
-      root: z
-        .string()
-        .describe("Local source directory to import as historical reference"),
+      root: localPathStringSchema.describe(
+        "Local source directory to import as historical reference",
+      ),
     }),
     options: z.object({
       detail: z
