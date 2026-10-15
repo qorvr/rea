@@ -15,7 +15,13 @@ import type { CliInstance } from "./types.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { javascriptApplicationOptions } from "../cliObservationOptions.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+
+const targetPath = localPathStringSchema.describe(
+  "App, program, or analysis database path",
+);
+const appPath = localPathStringSchema.describe("App or program path");
 
 /** Register provider-neutral binary overview and procedure CLI commands. */
 export const registerCoreBinaryCommands = (
@@ -66,10 +72,7 @@ const registerOverviewCommands = (
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("App, program, or analysis database path"),
+      path: targetPath,
     }),
     options: overviewOptions.extend({
       integrityPolicy: laneIntegrityPolicy,
@@ -134,7 +137,7 @@ const registerOverviewCommands = (
   cli.command(CLI_COMMANDS.inspect, {
     description: "Inspect an app overview with evidence",
     args: z.object({
-      path: z.string().describe("App, program, or analysis database path"),
+      path: targetPath,
     }),
     options: overviewOptions,
     run: ({ args, options }) =>
@@ -157,7 +160,7 @@ const registerDecompileCommand = (
   cli.command(CLI_COMMANDS.decompile, {
     description: "Read one part of an app as code",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: appPath,
       address: z
         .string()
         .min(1)
@@ -254,7 +257,7 @@ const registerXrefsCommand = (
   cli.command(CLI_COMMANDS.xrefs, {
     description: "List bounded references to an analyzed address",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: appPath,
       address: z.string().min(1).optional().describe("Address or symbol name"),
     }),
     options: z.object({
@@ -299,7 +302,7 @@ const registerTraceCommand = (
   cli.command(CLI_COMMANDS.trace, {
     description: "Trace a literal feature through analyzed references",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: appPath,
       query: z.string().min(1).optional().describe("Literal feature query"),
     }),
     options: z.object({
@@ -349,7 +352,7 @@ const registerFunctionCommand = (
   cli.command(CLI_COMMANDS.function, {
     description: "Analyze one complete function with evidence",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: appPath,
       address: z
         .string()
         .min(1)
@@ -398,7 +401,7 @@ const registerInstructionsCommand = (
   cli.command(CLI_COMMANDS.instructions, {
     description: "Read every raw instruction without decompiling",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: appPath,
       address: z
         .string()
         .min(1)
@@ -447,7 +450,7 @@ const registerSearchCommand = (
   cli.command(CLI_COMMANDS.search, {
     description: "Search every analyzed string or procedure name",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: appPath,
       pattern: z
         .string()
         .min(1)
