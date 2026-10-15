@@ -7,6 +7,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { Logger } from "pino";
 
@@ -19,14 +20,12 @@ export const registerWebScriptCommands = (
     description:
       "Export retained website scripts into an absent directory for static JavaScript analysis",
     args: z.object({
-      capturePath: z
-        .string()
-        .describe("Absolute path to saved page or scenario capture JSON"),
-      outputDirectory: z
-        .string()
-        .describe(
-          "Absolute absent directory for verified scripts and manifest",
-        ),
+      capturePath: localPathStringSchema.describe(
+        "Absolute path to saved page or scenario capture JSON",
+      ),
+      outputDirectory: localPathStringSchema.describe(
+        "Absolute absent directory for verified scripts and manifest",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, CLI_COMMANDS.exportWebScripts, async () => {
