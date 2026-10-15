@@ -98,6 +98,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     stderr: "pipe",
   });
   transport.stderr?.on("data", stderr.append);
+  transport.stderr?.on("error", () => {});
   const client = new Client({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
