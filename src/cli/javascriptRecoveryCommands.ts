@@ -4,6 +4,7 @@ import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecov
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -21,14 +22,17 @@ export const registerJavaScriptRecoveryCommands = (
     description:
       "Recover readable JavaScript modules with source provenance and verified files",
     args: z.object({
-      path: z
-        .string()
-        .describe("Absolute UTF-8 JavaScript input; never executed"),
-      outputDirectory: z.string().describe("Absolute absent output directory"),
+      path: localPathStringSchema.describe(
+        "Absolute UTF-8 JavaScript input; never executed",
+      ),
+      outputDirectory: localPathStringSchema.describe(
+        "Absolute absent output directory",
+      ),
     }),
     options: z.object({
       additionalPath: z
-        .array(z.string())
+        .array(localPathStringSchema)
+        .max(16)
         .optional()
         .describe(
           "Related absolute UTF-8 JavaScript file; repeat for multiple chunks",
