@@ -25,7 +25,11 @@ const scanRecoveryFile = async (
   consume: (chunk: Buffer) => void,
   signal?: AbortSignal,
 ) => {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const flags =
+    constants.O_RDONLY |
+    (constants.O_NOFOLLOW ?? 0) |
+    (constants.O_NONBLOCK ?? 0);
+  const handle = await open(path, flags);
   const hash = createHash("sha256");
   try {
     const before = await handle.stat();
