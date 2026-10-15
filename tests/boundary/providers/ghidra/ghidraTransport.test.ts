@@ -85,4 +85,76 @@ describe("Ghidra local transport", () => {
       });
     },
   );
+
+  it.each([
+    { win32Code: 2, label: "file not found" },
+    { win32Code: 3, label: "path not found" },
+    { win32Code: 32, label: "sharing violation" },
+    { win32Code: 33, label: "lock violation" },
+  ])(
+    "treats Windows $label (win32Code: $win32Code) as transient readiness",
+    async ({ win32Code }) => {
+      const error = Object.assign(new Error("Native Win32 error"), {
+        code: "ERR_REA_WINDOWS_NATIVE",
+        win32Code,
+      });
+      const readWindowsFile = () => {
+        throw error;
+      };
+      await expect(
+        observeGhidraEndpoint(
+          {
+            transport: "authenticated-loopback-tcp",
+            path: "C:\\runtime\\bridge-endpoint.json",
+          },
+          "win32",
+          readWindowsFile,
+        ),
+      ).resolves.toEqual({ ok: true, value: null });
+    },
+  );
+
+  it("fails observation when Windows encounters non-transient error", async () => {
+    const error = Object.assign(new Error("Native access denied"), {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 5,
+    });
+    const readWindowsFile = () => {
+      throw error;
+    };
+    await expect(
+      observeGhidraEndpoint(
+        {
+          transport: "authenticated-loopback-tcp",
+          path: "C:\\runtime\\bridge-endpoint.json",
+        },
+        "win32",
+        readWindowsFile,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "start",
+        message: "Ghidra endpoint observation failed",
+      },
+    });
+  });
+
+  it("parses valid TCP endpoint on Windows platform", async () => {
+    const readWindowsFile = () =>
+      JSON.stringify({ host: "127.0.0.1", port: 51234 });
+    await expect(
+      observeGhidraEndpoint(
+        {
+          transport: "authenticated-loopback-tcp",
+          path: "C:\\runtime\\bridge-endpoint.json",
+        },
+        "win32",
+        readWindowsFile,
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      value: { host: "127.0.0.1", port: 51234 },
+    });
+  });
 });

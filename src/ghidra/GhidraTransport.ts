@@ -56,6 +56,8 @@ export type GhidraConnectTarget =
 /** Observe a ready endpoint, returning null while its bridge is not listening. */
 export const observeGhidraEndpoint = async (
   endpoint: GhidraEndpoint,
+  platform: NodeJS.Platform = process.platform,
+  readWindowsFile: typeof readWindowsPrivateRuntimeFile = readWindowsPrivateRuntimeFile,
 ): Promise<Result<GhidraConnectTarget | null, GhidraSessionError>> => {
   if (endpoint.transport === "unix-socket") {
     try {
@@ -73,12 +75,9 @@ export const observeGhidraEndpoint = async (
           );
     }
   }
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     try {
-      return parseTcpEndpoint(
-        endpoint,
-        readWindowsPrivateRuntimeFile(endpoint.path),
-      );
+      return parseTcpEndpoint(endpoint, readWindowsFile(endpoint.path));
     } catch (cause: unknown) {
       return isMissing(cause) || isWindowsEndpointWriterBusy(cause)
         ? ok(null)
@@ -173,7 +172,11 @@ const endpointFailure = (
   );
 
 const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+  cause instanceof Error &&
+  (("code" in cause && cause.code === "ENOENT") ||
+    ("win32Code" in cause && (cause.win32Code === 2 || cause.win32Code === 3)));
 
 const isWindowsEndpointWriterBusy = (cause: unknown): boolean =>
-  cause instanceof Error && "win32Code" in cause && cause.win32Code === 32;
+  cause instanceof Error &&
+  "win32Code" in cause &&
+  (cause.win32Code === 32 || cause.win32Code === 33);
