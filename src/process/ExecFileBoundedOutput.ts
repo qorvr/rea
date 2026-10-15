@@ -46,6 +46,8 @@ export const execFileBoundedOutput = (
       };
     child.stdout.on("data", capture(stdout));
     child.stderr.on("data", capture(stderr));
+    child.stdout.on("error", () => {});
+    child.stderr.on("error", () => {});
     let spawnError: NodeJS.ErrnoException | undefined;
     child.on("error", (error: NodeJS.ErrnoException) => {
       spawnError = error;
