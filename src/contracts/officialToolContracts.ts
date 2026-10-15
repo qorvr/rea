@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nulFreeStringSchema } from "../domain/localPath.js";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
 
 import { officialOutputSchemas } from "./toolOutputSchemaGroups.js";
@@ -202,27 +203,34 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "set_address_name",
     "Assign an analyst name to one mapped hexadecimal address and report whether the native edit succeeded and exact readback matched. Hopper rejects symbol names exceeding 1024 UTF-16 code units before mutation, and rejects names owned by another address; use set_addresses_names to explicitly move or swap labels among selected addresses. This mutates analysis metadata.",
-    z.object({ address, name: z.string(), document }),
+    z.object({ address, name: nulFreeStringSchema.min(1), document }),
   ),
   official(
     "set_addresses_names",
     "Assign analyst names to multiple mapped addresses in one call and return per-address edit/readback success booleans. Hopper validates mapped destinations, native string representations, its 1024 UTF-16 code-unit symbol-name limit, and unique destinations/names before applying edits. Existing labels may move or swap only among explicitly selected addresses; unselected label owners remain unchanged. This mutates analysis metadata; verify failures individually.",
-    z.object({ names: z.record(z.string(), z.string()), document }),
+    z.object({
+      names: z.record(address, nulFreeStringSchema.min(1)),
+      document,
+    }),
   ),
   official(
     "set_bookmark",
     "Create or replace a bookmark at a mapped hexadecimal address and report success. This mutates navigation metadata; bookmarks are analyst-authored navigation aids, not binary evidence.",
-    z.object({ address, name: z.string().optional(), document }),
+    z.object({
+      address,
+      name: nulFreeStringSchema.min(1).optional(),
+      document,
+    }),
   ),
   official(
     "set_comment",
     "Write a regular analysis comment at a hexadecimal address and return whether readback matched. An empty comment clears it. This mutates the Hopper document; use comments to record evidence IDs or reasoning.",
-    z.object({ address, comment: z.string(), document }),
+    z.object({ address, comment: nulFreeStringSchema, document }),
   ),
   official(
     "set_inline_comment",
     "Write an inline instruction comment at a hexadecimal address and return whether readback matched. An empty comment clears it; Hopper may flatten newlines, producing false on exact readback. This mutates analysis metadata.",
-    z.object({ address, comment: z.string(), document }),
+    z.object({ address, comment: nulFreeStringSchema, document }),
   ),
   official(
     "unset_bookmark",
