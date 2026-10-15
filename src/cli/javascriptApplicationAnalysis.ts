@@ -2,10 +2,13 @@ import { JAVASCRIPT_APPLICATION_PROVIDER } from "../application/InvestigationPro
 import { createProgressReporter } from "../application/ProgressReporter.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err } from "../domain/result.js";
 
 /** Execute the shared one-shot CLI boundary for static JavaScript analysis. */
 export const runCliJavaScriptApplicationAnalysis = async (
@@ -21,10 +24,23 @@ export const runCliJavaScriptApplicationAnalysis = async (
     { minimumIntervalMs: 0 },
   );
   const resources = new ArtifactResourceScope();
-  const result = await analyzeJavaScriptApplication(input, resources, {
-    progress,
-    ...(signal === undefined ? {} : { signal }),
-  });
+  let result: Awaited<ReturnType<typeof analyzeJavaScriptApplication>>;
+  try {
+    result = await analyzeJavaScriptApplication(input, resources, {
+      progress,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause) {
+    result = err(
+      cause instanceof AnalysisError
+        ? cause
+        : new ProviderAdapterError(
+            JAVASCRIPT_APPLICATION_PROVIDER.id,
+            "analyze_javascript_application",
+            { cause },
+          ),
+    );
+  }
   try {
     await resources.close();
   } catch (cause: unknown) {

@@ -13,8 +13,9 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
@@ -36,7 +37,16 @@ export const registerFridaCommands = (
   const withProviderCleanup = async <Value>(
     operation: () => Promise<Result<Value, AnalysisError>>,
   ): Promise<Result<Value, AnalysisError>> => {
-    const result = await operation();
+    let result: Result<Value, AnalysisError>;
+    try {
+      result = await operation();
+    } catch (cause) {
+      result = err(
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError("frida", "frida_operation", { cause }),
+      );
+    }
     try {
       await provider.closeAll();
     } catch (cause: unknown) {

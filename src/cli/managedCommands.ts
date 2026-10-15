@@ -8,9 +8,12 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err } from "../domain/result.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -116,14 +119,27 @@ const registerCompareManagedMembers = (
     run: ({ args }) =>
       logCliCommand(logger, "compare-managed-members", async () => {
         const resources = new ArtifactResourceScope();
-        const result = await compareManagedMemberPaths(
-          {
-            leftPath: args.leftPath,
-            rightPath: args.rightPath,
-          },
-          {},
-          resources,
-        );
+        let result: Awaited<ReturnType<typeof compareManagedMemberPaths>>;
+        try {
+          result = await compareManagedMemberPaths(
+            {
+              leftPath: args.leftPath,
+              rightPath: args.rightPath,
+            },
+            {},
+            resources,
+          );
+        } catch (cause) {
+          result = err(
+            cause instanceof AnalysisError
+              ? cause
+              : new ProviderAdapterError(
+                  MANAGED_STATIC_PROVIDER.id,
+                  "compare_managed_members",
+                  { cause },
+                ),
+          );
+        }
         try {
           await resources.close();
         } catch (cause: unknown) {

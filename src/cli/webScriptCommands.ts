@@ -5,9 +5,12 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err } from "../domain/result.js";
 import type { Logger } from "pino";
 
 /** Register the local captured-script export CLI workflow. */
@@ -31,13 +34,26 @@ export const registerWebScriptCommands = (
     run: ({ args }) =>
       logCliCommand(logger, CLI_COMMANDS.exportWebScripts, async () => {
         const resources = new ArtifactResourceScope();
-        const result = await exportWebScripts(
-          {
-            capture_path: args.capturePath,
-            output_directory: args.outputDirectory,
-          },
-          resources,
-        );
+        let result: Awaited<ReturnType<typeof exportWebScripts>>;
+        try {
+          result = await exportWebScripts(
+            {
+              capture_path: args.capturePath,
+              output_directory: args.outputDirectory,
+            },
+            resources,
+          );
+        } catch (cause) {
+          result = err(
+            cause instanceof AnalysisError
+              ? cause
+              : new ProviderAdapterError(
+                  "web-script-export",
+                  "export_web_scripts",
+                  { cause },
+                ),
+          );
+        }
         try {
           await resources.close();
         } catch (cause: unknown) {
