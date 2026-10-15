@@ -84,6 +84,7 @@ export class JavaScriptAnalysisWorker {
   /** Null when the runtime enforces the V8 heap flags instead. */
   readonly #processMemoryLimitBytes: number | null;
   readonly #onStdinError = (): void => {};
+  readonly #onStdoutError = (): void => {};
   readonly #onStdout = (chunk: Buffer | string): void => {
     try {
       this.#pending +=
@@ -490,6 +491,7 @@ export class JavaScriptAnalysisWorker {
       { captureStdout: false, maxDiagnosticBytes: 256 * 1024 },
     );
     spawned.process.stdout?.on("data", this.#onStdout);
+    spawned.process.stdout?.on("error", this.#onStdoutError);
     const ready = await this.#next(deadline, "worker startup");
     if (ready.kind !== "ready")
       throw new AnalysisOutputError(
@@ -786,6 +788,7 @@ export class JavaScriptAnalysisWorker {
       const supervisor = this.#supervisor;
       const stopped = await supervisor.stop();
       supervisor.launch.process.stdout?.off("data", this.#onStdout);
+      supervisor.launch.process.stdout?.off("error", this.#onStdoutError);
       if (stopped.status === "incomplete") {
         try {
           const stdin = supervisor.launch.process.stdin;
