@@ -9,6 +9,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
 export const registerSqliteCommands = (
@@ -21,7 +22,7 @@ export const registerSqliteCommands = (
     description:
       "Inspect SQLite schema and optional ordinary-table rows from a local snapshot",
     args: z.object({
-      path: z.string().describe("Local SQLite database snapshot"),
+      path: localPathStringSchema.describe("Local SQLite database snapshot"),
     }),
     options: z.object({
       table: z
