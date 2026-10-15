@@ -255,8 +255,14 @@ const requireMachoRoots = async (
 };
 
 const startsWithMachoMagic = async (path: string): Promise<boolean> => {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const flags =
+    constants.O_RDONLY |
+    (constants.O_NOFOLLOW ?? 0) |
+    (constants.O_NONBLOCK ?? 0);
+  const handle = await open(path, flags);
   try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) return false;
     const buffer = new Uint8Array(4);
     const { bytesRead } = await handle.read(buffer, 0, 4, 0);
     return hasMachoMagic(buffer.subarray(0, bytesRead));
@@ -288,9 +294,18 @@ const readImage = async (
   readonly identity: FileIdentity;
 }> => {
   cancelled(signal);
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const flags =
+    constants.O_RDONLY |
+    (constants.O_NOFOLLOW ?? 0) |
+    (constants.O_NONBLOCK ?? 0);
+  const handle = await open(path, flags);
   try {
     const metadata = await handle.stat({ bigint: true });
+    if (!metadata.isFile())
+      return {
+        facts: { status: "not-mach-o" },
+        identity: identityOf(metadata),
+      };
     const size = Number(metadata.size);
     const facts = await readMachoImage(async (offset, length) => {
       cancelled(signal);
@@ -316,14 +331,21 @@ const fileSha256 = async (
   },
 ): Promise<string> => {
   const { signal } = options;
-  const handle = await open(
-    absolute,
-    constants.O_RDONLY | constants.O_NOFOLLOW,
-  );
+  const flags =
+    constants.O_RDONLY |
+    (constants.O_NOFOLLOW ?? 0) |
+    (constants.O_NONBLOCK ?? 0);
+  const handle = await open(absolute, flags);
   const unchanged = async (): Promise<void> => {
+    const metadata = await handle.stat({ bigint: true });
+    if (!metadata.isFile())
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `${options.path} is not a regular file`,
+      );
     if (
       options.expected !== undefined &&
-      identityOf(await handle.stat({ bigint: true })) !== options.expected
+      identityOf(metadata) !== options.expected
     )
       throw new ArtifactReaderFailure(
         "integrity",
