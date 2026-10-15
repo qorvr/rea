@@ -570,6 +570,9 @@ export class GdbSessionManager {
         typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk,
       ),
     );
+    launched.process.stdout?.on("error", (cause: Error) =>
+      this.#failProtocol(session, `GDB stdout stream failed: ${cause.message}`),
+    );
     if (launched.process.stdout === null) settleStdout();
     else launched.process.stdout.once("end", settleStdout);
     launched.process.stdin?.on("error", (cause: Error) =>
