@@ -67,6 +67,8 @@ export const runUpdateCommand = (
       stderr += chunk;
       if (output === "human") process.stderr.write(chunk);
     });
+    child.stdout?.on("error", () => {});
+    child.stderr?.on("error", () => {});
     child.once("error", (cause) => resolveResult(err(cause.message)));
     child.once("close", (code, signal) =>
       resolveResult(
