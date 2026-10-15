@@ -3,6 +3,7 @@ import { WEB_NETWORK_CAPTURE_FORMATS } from "../domain/webNetworkCapture.js";
 import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -19,7 +20,9 @@ export const registerWebNetworkCaptureCommands = (
     description:
       "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
     args: z.object({
-      capturePath: z.string().describe("Absolute local capture path"),
+      capturePath: localPathStringSchema.describe(
+        "Absolute local capture path",
+      ),
       format: z
         .enum(WEB_NETWORK_CAPTURE_FORMATS)
         .describe("Producer capture format"),
