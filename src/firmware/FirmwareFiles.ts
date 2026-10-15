@@ -1,13 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants, createReadStream, createWriteStream } from "node:fs";
-import {
-  chmod,
-  lstat,
-  opendir,
-  open,
-  readlink,
-  realpath,
-} from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { chmod, lstat, opendir, readlink, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -18,6 +11,11 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import {
+  NonRegularFileReadError,
+  openRegularFile,
+  RegularFileAdmissionFailure,
+} from "../filesystem/RegularFile.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
@@ -42,11 +40,12 @@ export const hashFirmwareFile = async (
   path: string,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await openRegularFile(path, {
+    symlinks: "reject",
+    signal,
+  });
   const hash = createHash("sha256");
   try {
-    if (!(await handle.stat()).isFile())
-      throw new Error(`Not a regular file: ${path}`);
     for await (const chunk of handle.createReadStream({ autoClose: false })) {
       signal?.throwIfAborted();
       hash.update(chunk);
@@ -65,17 +64,28 @@ export const snapshotFirmware = async (
 ) => {
   const sourcePath = resolve(request.input.path);
   const source = await realpath(sourcePath);
-  const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await openRegularFile(source, {
+    symlinks: "reject",
+    signal,
+  }).catch((cause: unknown) => {
+    if (cause instanceof RegularFileAdmissionFailure) throw cause;
+    throwIfFirmwareInventoryCancelled(signal, request.operation);
+    if (cause instanceof NonRegularFileReadError)
+      throw new AnalysisInputError(request.operation, undefined, [
+        {
+          path: ["path"],
+          reason: "out_of_range",
+          message: `Firmware must be a nonempty regular file no larger than ${FIRMWARE_LIMITS.inputBytes} bytes`,
+        },
+      ]);
+    throw cause;
+  });
   const fullPath = join(root, "firmware.bin");
   const hash = createHash("sha256");
   let size = 0;
   try {
     const stat = await handle.stat();
-    if (
-      !stat.isFile() ||
-      stat.size === 0 ||
-      stat.size > FIRMWARE_LIMITS.inputBytes
-    )
+    if (stat.size === 0 || stat.size > FIRMWARE_LIMITS.inputBytes)
       throw new AnalysisInputError(request.operation, undefined, [
         {
           path: ["path"],
@@ -147,10 +157,15 @@ export const readFirmwareReport = async (
   path: string,
   operation: string,
 ): Promise<unknown> => {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!(await handle.stat()).isFile())
+  const handle = await openRegularFile(path, {
+    symlinks: "reject",
+  }).catch((cause: unknown) => {
+    if (cause instanceof RegularFileAdmissionFailure) throw cause;
+    if (cause instanceof NonRegularFileReadError)
       throw new AnalysisOutputError(operation, "Report is not a regular file");
+    throw cause;
+  });
+  try {
     const bytes = await readBoundedFileBytes(
       handle,
       FIRMWARE_LIMITS.reportBytes,
