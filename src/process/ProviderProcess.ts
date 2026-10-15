@@ -292,6 +292,9 @@ export class ProviderProcessSupervisor {
   readonly #onStderrError = (cause: Error): void => {
     this.#recordStreamError("stderr", cause);
   };
+  readonly #onStdinError = (cause: Error): void => {
+    this.#recordStreamError("stdin", cause);
+  };
   readonly #onExit = (
     code: number | null,
     signal: NodeJS.Signals | null,
@@ -323,6 +326,7 @@ export class ProviderProcessSupervisor {
     if (options.captureStdout !== false)
       this.#attach(launch.process.stdout, "stdout");
     this.#attach(launch.process.stderr, "stderr");
+    launch.process.stdin?.on?.("error", this.#onStdinError);
     launch.process.once("exit", this.#onExit);
     launch.process.once("close", this.#onClose);
     launch.process.on("error", this.#onError);
@@ -433,6 +437,7 @@ export class ProviderProcessSupervisor {
     this.launch.process.stdout?.off("error", this.#onStdoutError);
     this.launch.process.stderr?.off("data", this.#onStderr);
     this.launch.process.stderr?.off("error", this.#onStderrError);
+    this.launch.process.stdin?.off?.("error", this.#onStdinError);
     this.launch.process.off("exit", this.#onExit);
     this.launch.process.off("close", this.#onClose);
     this.launch.process.off("error", this.#onError);
@@ -558,7 +563,10 @@ export class ProviderProcessSupervisor {
     }
   }
 
-  #recordStreamError(stream: "stdout" | "stderr", cause: Error): void {
+  #recordStreamError(
+    stream: "stdout" | "stderr" | "stdin",
+    cause: Error,
+  ): void {
     this.#options.onDiagnostic?.({
       type: "error",
       message: `${stream} stream failed: ${cause.message}`,
