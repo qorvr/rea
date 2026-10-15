@@ -5,6 +5,7 @@ import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
@@ -43,9 +44,9 @@ export const registerJebCommands = (
     description:
       "Open or create a JEB project from an artifact or .jdb2 database",
     args: z.object({
-      path: z
-        .string()
-        .describe("Artifact or .jdb2 path resolved by the JEB engine host"),
+      path: localPathStringSchema.describe(
+        "Artifact or .jdb2 path resolved by the JEB engine host",
+      ),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.openJebProject, "open_jeb_project", args),
@@ -60,6 +61,7 @@ export const registerJebCommands = (
         .describe("Wildcard filter matched against unit paths"),
       "parent-unit-path": z
         .string()
+        .min(1)
         .optional()
         .describe("Restrict results to descendants of this unit path"),
       index: z
