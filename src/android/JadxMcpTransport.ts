@@ -80,7 +80,9 @@ export class JadxMcpTransport implements Transport {
     )
       throw new Error("JADX launcher did not supply protocol stdin/stdout");
     spawned.process.stdout.on("data", this.#read);
+    spawned.process.stdout.on("error", this.#error);
     spawned.process.stderr?.on("data", this.#countStderr);
+    spawned.process.stderr?.on("error", this.#error);
     spawned.process.on("error", this.#error);
     spawned.process.once("exit", this.#exit);
     spawned.process.stdin.on("error", this.#error);
@@ -153,6 +155,8 @@ export class JadxMcpTransport implements Transport {
     input?.destroy();
     await inputClosed;
     input?.off("error", this.#error);
+    this.#spawned?.process.stdout?.off("error", this.#error);
+    this.#spawned?.process.stderr?.off("error", this.#error);
     this.onclose?.();
     if (stopped?.status === "incomplete")
       throw new ProviderCleanupError("jadx", [this.runId], {
