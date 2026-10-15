@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { nulFreeStringSchema } from "../domain/localPath.js";
 import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
 const traceLiteralInputSchema = z.strictObject({
-  query: z.string().min(1),
+  query: nulFreeStringSchema.min(1),
   case_sensitive: z.boolean().default(false),
 });
 
@@ -15,12 +16,16 @@ export const enhancedInputSchemas = {
   get_objc_protocols: z.strictObject({}),
   batch_decompile: z.strictObject({
     addresses: z
-      .array(z.string().describe("A provider-normalized procedure address"))
+      .array(
+        nulFreeStringSchema
+          .min(1)
+          .describe("A provider-normalized procedure address"),
+      )
       .default([]),
   }),
   get_call_graph: z.strictObject({
-    address: z
-      .string()
+    address: nulFreeStringSchema
+      .min(1)
       .describe(
         "A procedure symbol or address to resolve to its canonical entry",
       ),
@@ -40,26 +45,31 @@ export const enhancedInputSchemas = {
         "Case-sensitive literal filter applied to provider procedure names and their supporting Swift manglings.",
       ),
   }),
-  find_xrefs_to_name: z.strictObject({ name: z.string() }),
+  find_xrefs_to_name: z.strictObject({ name: nulFreeStringSchema.min(1) }),
   binary_overview: z.strictObject({}),
   analyze_function: z.strictObject({
-    procedure: z.string().describe("A procedure name or address"),
+    procedure: nulFreeStringSchema
+      .min(1)
+      .describe("A procedure name or address"),
   }),
   inspect_native_api: z.strictObject({
-    procedure: z.string().describe("A procedure name or address"),
+    procedure: nulFreeStringSchema
+      .min(1)
+      .describe("A procedure name or address"),
   }),
   trace_feature: traceLiteralInputSchema,
   trace_call_path: z.strictObject({
-    start: z.string().describe("A starting procedure symbol or address"),
-    goal: z
-      .string()
+    start: nulFreeStringSchema
+      .min(1)
+      .describe("A starting procedure symbol or address"),
+    goal: nulFreeStringSchema
+      .min(1)
       .describe("An optional destination procedure symbol or address")
       .optional(),
     direction: z.enum(["forward", "backward"]).default("forward"),
   }),
   trace_native_ui_action: z.strictObject({
-    action: z
-      .string()
+    action: nulFreeStringSchema
       .min(1)
       .describe(
         "A unique compiled UI action selector, interface object ID, native symbol or exact function address",
