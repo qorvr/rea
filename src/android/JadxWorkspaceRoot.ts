@@ -108,6 +108,7 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
     child.stderr.on("data", (chunk: Buffer) => {
       diagnostics = (diagnostics + chunk.toString()).slice(-8192);
     });
+    child.stderr.on("error", () => {});
     const exit = new Promise<GuardianExit>((resolve) => {
       child.once("error", (error: Error) =>
         resolve({ code: null, signal: null, error }),
