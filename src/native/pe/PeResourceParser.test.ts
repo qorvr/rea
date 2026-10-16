@@ -386,4 +386,40 @@ describe("PE resource section virtual extent", () => {
       sha256: createHash("sha256").update(payload).digest("hex"),
     });
   });
+
+  it("does not treat a zero-extent section inside a resource interval as overlapping", async () => {
+    const fixture = peResourceFixture(false, [
+      { type: 10, name: 1, language: 1033, payload: Buffer.from("DATA") },
+    ]);
+    fixture.bytes.writeUInt16LE(2, 0x86);
+    const section = fixture.sectionAt + 40;
+    fixture.bytes.writeUInt32LE(0, section + 8);
+    fixture.bytes.writeUInt32LE(0x2001, section + 12);
+    fixture.bytes.writeUInt32LE(0, section + 16);
+
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: 0x2058,
+      location: { offset: 1112, bytes: 4 },
+    });
+  });
+
+  it("does not treat a zero-extent section inside header mapping as ambiguous", async () => {
+    const fixture = peResourceFixture(false, [
+      { type: 10, name: 1, language: 1033, payload: Buffer.from("HDR") },
+    ]);
+    fixture.bytes.writeUInt16LE(2, 0x86);
+    fixture.bytes.writeUInt32LE(0x40, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(3, (fixture.dataOffsets[0] ?? 0) + 4);
+    const section = fixture.sectionAt + 40;
+    fixture.bytes.writeUInt32LE(0, section + 8);
+    fixture.bytes.writeUInt32LE(0x41, section + 12);
+    fixture.bytes.writeUInt32LE(0, section + 16);
+
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: 0x40,
+      location: { offset: 0x40, bytes: 3 },
+    });
+  });
 });
