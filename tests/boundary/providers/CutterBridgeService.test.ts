@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vitest";
 
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 
 const cutterInput = {
@@ -403,4 +405,53 @@ it("shares one cleanup attempt when commands retry the same receipt together", a
   expect(recovered.every((result) => result.ok)).toBe(true);
   expect(confirms).toBe(1);
   expect(dispatches).toBe(3);
+});
+
+it("propagates client cleanup failure through service retryCleanup and blocks execution", async () => {
+  let cleaned = false;
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+    }),
+    retryCleanup: async () => {
+      if (!cleaned) {
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "cutter",
+            "cutter_command",
+            "Descriptor cleanup still pending",
+          ),
+        );
+      }
+      return ok(null);
+    },
+    execute: async () => ({
+      requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+      output: "ok",
+      currentFile: null,
+      documentGeneration: 7,
+      identityStatus: "partial",
+      cutterVersion: null,
+      executionState: "complete",
+      error: null,
+      message: null,
+      outputTruncated: false,
+    }),
+  });
+
+  const failure = await service.execute(cutterInput);
+  expect(failure.ok).toBe(false);
+  expect(failure).toMatchObject({
+    ok: false,
+    error: {
+      message: expect.stringContaining("Descriptor cleanup still pending"),
+    },
+  });
+
+  cleaned = true;
+  const success = await service.execute(cutterInput);
+  expect(success.ok).toBe(true);
 });

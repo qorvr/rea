@@ -2,9 +2,15 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection } from "node:net";
-import { lstat, open, opendir } from "node:fs/promises";
+import { lstat, opendir, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+
+import {
+  openRegularFile,
+  RegularFileAdmissionFailure,
+} from "../filesystem/RegularFile.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import {
   AnalysisCapabilityUnavailableError,
@@ -167,6 +173,7 @@ class CutterBridgeResponseFrames {
 const mapDiscovery = async <Input, Output>(
   inputs: readonly Input[],
   operation: (input: Input) => Promise<Output>,
+  signal?: AbortSignal,
 ): Promise<Output[]> => {
   const results = new Array<Output>(inputs.length);
   let next = 0;
@@ -175,6 +182,7 @@ const mapDiscovery = async <Input, Output>(
       { length: Math.min(inputs.length, DISCOVERY_CONCURRENCY) },
       async () => {
         while (next < inputs.length) {
+          signal?.throwIfAborted();
           const index = next++;
           results[index] = await operation(inputs[index]!);
         }
@@ -246,6 +254,7 @@ export class CutterBridgeClient {
   readonly #platform: NodeJS.Platform;
   readonly #windowsPrivateReader: WindowsCutterDescriptorReader | undefined;
   readonly #pendingAcknowledgements = new Map<string, Set<string>>();
+  readonly #descriptorOwners = new Set<OwnedFileHandle>();
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -286,8 +295,10 @@ export class CutterBridgeClient {
     );
   }
 
-  async listSessions(): Promise<CutterBridgeDiscovery> {
-    const loaded = await this.#readDescriptors();
+  async listSessions(signal?: AbortSignal): Promise<CutterBridgeDiscovery> {
+    signal?.throwIfAborted();
+    await this.#retryDescriptorCleanup();
+    const loaded = await this.#readDescriptors(signal);
     if (loaded.error !== undefined)
       return {
         sessions: [],
@@ -298,6 +309,7 @@ export class CutterBridgeClient {
     const descriptors = await mapDiscovery(
       loaded.descriptors,
       async (descriptor) => {
+        signal?.throwIfAborted();
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -306,6 +318,7 @@ export class CutterBridgeClient {
                 kind: "status",
                 session_id: descriptor.session_id,
               }),
+              signal,
             ),
           );
           if (
@@ -331,6 +344,7 @@ export class CutterBridgeClient {
           return undefined;
         }
       },
+      signal,
     );
     const sessions = descriptors.filter(
       (value): value is CutterBridgeSession => value !== undefined,
@@ -352,7 +366,7 @@ export class CutterBridgeClient {
     readonly signal?: AbortSignal;
   }): Promise<CutterBridgeExecution> {
     input.signal?.throwIfAborted();
-    const descriptor = await this.#find(input.sessionId);
+    const descriptor = await this.#find(input.sessionId, input.signal);
     input.signal?.throwIfAborted();
     const requestId = randomUUID();
     const commandRequest = serializeRequest(descriptor, {
@@ -592,8 +606,51 @@ export class CutterBridgeClient {
     }
   }
 
-  async #find(sessionId: string): Promise<z.infer<typeof descriptorSchema>> {
-    const loaded = await this.#readDescriptors();
+  async #retryDescriptorCleanup(): Promise<void> {
+    for (const owner of this.#descriptorOwners) {
+      try {
+        await owner.close();
+        this.#descriptorOwners.delete(owner);
+      } catch {
+        // Kept for next retry
+      }
+    }
+  }
+
+  async retryCleanup(): Promise<Result<null, AnalysisError>> {
+    const causes: unknown[] = [];
+    for (const owner of this.#descriptorOwners) {
+      try {
+        await owner.close();
+        this.#descriptorOwners.delete(owner);
+      } catch (cause) {
+        causes.push(cause);
+      }
+    }
+    if (causes.length > 0) {
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "cutter",
+          "cutter_command",
+          "Failed to close retained Cutter descriptor handle during cleanup retry",
+          { cause: new AggregateError(causes) },
+        ),
+      );
+    }
+    return ok(null);
+  }
+
+  get retainedDescriptorCount(): number {
+    return this.#descriptorOwners.size;
+  }
+
+  async #find(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<z.infer<typeof descriptorSchema>> {
+    signal?.throwIfAborted();
+    await this.#retryDescriptorCleanup();
+    const loaded = await this.#readDescriptors(signal);
     if (loaded.error === "bridge_directory_capacity_exceeded")
       throw new AnalysisResourceConstraintError(
         "cutter_command",
@@ -618,14 +675,16 @@ export class CutterBridgeClient {
     return descriptor;
   }
 
-  async listDescriptors(): Promise<
-    readonly z.infer<typeof descriptorSchema>[]
-  > {
-    const loaded = await this.#readDescriptors();
+  async listDescriptors(
+    signal?: AbortSignal,
+  ): Promise<readonly z.infer<typeof descriptorSchema>[]> {
+    signal?.throwIfAborted();
+    await this.#retryDescriptorCleanup();
+    const loaded = await this.#readDescriptors(signal);
     return loaded.descriptors;
   }
 
-  async #readDescriptors(): Promise<{
+  async #readDescriptors(signal?: AbortSignal): Promise<{
     readonly descriptors: readonly z.infer<typeof descriptorSchema>[];
     readonly security:
       | "private_verified"
@@ -637,10 +696,12 @@ export class CutterBridgeClient {
       | "bridge_directory_insecure"
       | "bridge_directory_capacity_exceeded";
   }> {
+    signal?.throwIfAborted();
     let directoryInfo;
     try {
       directoryInfo = await lstat(this.#directory);
     } catch (cause) {
+      if (signal?.aborted) throw cause;
       const code = (cause as NodeJS.ErrnoException).code;
       if (code === "ENOENT")
         return { descriptors: [], security: "not_checked" };
@@ -702,6 +763,7 @@ export class CutterBridgeClient {
     try {
       const directory = await opendir(this.#directory);
       for await (const entry of directory) {
+        signal?.throwIfAborted();
         if (!/^cutter-\d+-[0-9a-f-]{36}\.json$/iu.test(entry.name)) continue;
         if (entries.length === MAX_DESCRIPTOR_CANDIDATES)
           return {
@@ -711,57 +773,80 @@ export class CutterBridgeClient {
           };
         entries.push(entry.name);
       }
-    } catch {
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
       return {
         descriptors: [],
         security: "not_checked",
         error: "bridge_directory_unavailable",
       };
     }
-    const loaded = await mapDiscovery(entries, async (entry) => {
-      let file;
-      try {
-        let bytes: Buffer;
-        if (this.#platform === "win32") {
-          bytes = windowsPrivateReader!.readDescriptor(
-            this.#directory,
-            entry,
-            MAX_DESCRIPTOR_BYTES,
+    const loaded = await mapDiscovery(
+      entries,
+      async (entry) => {
+        signal?.throwIfAborted();
+        let file: FileHandle | undefined;
+        let owner: OwnedFileHandle | undefined;
+        try {
+          let bytes: Buffer;
+          if (this.#platform === "win32") {
+            bytes = windowsPrivateReader!.readDescriptor(
+              this.#directory,
+              entry,
+              MAX_DESCRIPTOR_BYTES,
+            );
+          } else {
+            file = await openRegularFile(join(this.#directory, entry), {
+              symlinks: "reject",
+              signal,
+            });
+            owner = new OwnedFileHandle(file);
+            this.#descriptorOwners.add(owner);
+            const info = await file.stat();
+            if (
+              info.size > MAX_DESCRIPTOR_BYTES ||
+              info.uid !== currentUid ||
+              (info.mode & 0o077) !== 0
+            )
+              return undefined;
+            const boundedBytes = await readBoundedFileBytes(
+              file,
+              MAX_DESCRIPTOR_BYTES,
+              signal,
+              info.size,
+            );
+            if (boundedBytes === undefined) return undefined;
+            bytes = boundedBytes;
+          }
+          if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
+          const parsed = descriptorSchema.safeParse(
+            JSON.parse(bytes.toString("utf8")) as unknown,
           );
-        } else {
-          const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
-          file = await open(join(this.#directory, entry), flags);
-          const info = await file.stat();
           if (
-            !info.isFile() ||
-            info.size > MAX_DESCRIPTOR_BYTES ||
-            info.uid !== currentUid ||
-            (info.mode & 0o077) !== 0
+            !parsed.success ||
+            entry !== `cutter-${parsed.data.pid}-${parsed.data.session_id}.json`
           )
             return undefined;
-          const boundedBytes = await readBoundedFileBytes(
-            file,
-            MAX_DESCRIPTOR_BYTES,
-          );
-          if (boundedBytes === undefined) return undefined;
-          bytes = boundedBytes;
-        }
-        if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
-        const parsed = descriptorSchema.safeParse(
-          JSON.parse(bytes.toString("utf8")) as unknown,
-        );
-        if (
-          !parsed.success ||
-          entry !== `cutter-${parsed.data.pid}-${parsed.data.session_id}.json`
-        )
+          return parsed.data;
+        } catch (cause) {
+          if (cause instanceof RegularFileAdmissionFailure) {
+            this.#descriptorOwners.add(cause.owner);
+          }
+          if (signal?.aborted) throw cause;
           return undefined;
-        return parsed.data;
-      } catch {
-        return undefined;
-      } finally {
-        await file?.close().catch(() => undefined);
-      }
-    });
+        } finally {
+          if (owner !== undefined) {
+            try {
+              await owner.close();
+              this.#descriptorOwners.delete(owner);
+            } catch {
+              // Retained in this.#descriptorOwners for retry
+            }
+          }
+        }
+      },
+      signal,
+    );
     return {
       descriptors: loaded.filter(
         (value): value is z.infer<typeof descriptorSchema> =>

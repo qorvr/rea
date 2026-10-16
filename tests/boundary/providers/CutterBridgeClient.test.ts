@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -1486,5 +1487,121 @@ describe("CutterBridgeClient: scenario group 9", () => {
     expect(result.value.limitations).not.toContain(
       "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
     );
+  });
+});
+
+describe("CutterBridgeClient: descriptor nonblocking admission and cleanup", () => {
+  let directory: string | undefined;
+
+  afterEach(async () => {
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+  });
+
+  it("skips non-regular FIFO descriptor candidates without blocking and discovers regular descriptors", async () => {
+    if (process.platform === "win32") return;
+    directory = await mkdtemp(join(tmpdir(), "rea-cutter-fifo-"));
+    await chmod(directory, 0o700);
+
+    const fifoPath = join(
+      directory,
+      "cutter-1-00000000-0000-4000-8000-000000000001.json",
+    );
+    execFileSync("mkfifo", ["-m", "0600", fifoPath]);
+
+    const validSessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    await writeDescriptor(
+      directory,
+      validSessionId,
+      1234,
+      "synthetic-cutter-bridge-token-for-test",
+    );
+
+    const client = new CutterBridgeClient({
+      REA_CUTTER_BRIDGE_DIR: directory,
+    });
+    const descriptors = await client.listDescriptors();
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]?.session_id).toBe(validSessionId);
+  });
+
+  it("aborts descriptor discovery before socket requests when signal is aborted", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-cutter-abort-"));
+    await chmod(directory, 0o700);
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    await writeDescriptor(
+      directory,
+      sessionId,
+      1234,
+      "synthetic-cutter-bridge-token-for-test",
+    );
+
+    const controller = new AbortController();
+    controller.abort(new Error("operation aborted"));
+
+    const client = new CutterBridgeClient({
+      REA_CUTTER_BRIDGE_DIR: directory,
+    });
+    await expect(client.listDescriptors(controller.signal)).rejects.toThrow(
+      "operation aborted",
+    );
+    await expect(client.listSessions(controller.signal)).rejects.toThrow(
+      "operation aborted",
+    );
+  });
+
+  it("retains failed descriptor closes and releases them on retryCleanup", async () => {
+    if (process.platform === "win32") return;
+    directory = await mkdtemp(join(tmpdir(), "rea-cutter-failed-close-"));
+    await chmod(directory, 0o700);
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    await writeDescriptor(
+      directory,
+      sessionId,
+      1234,
+      "synthetic-cutter-bridge-token-for-test",
+    );
+
+    let closeFailures = 1;
+    await vi.resetModules();
+    vi.doMock("../../../src/filesystem/OwnedFileHandle.js", async () => {
+      const actual = await vi.importActual<
+        typeof import("../../../src/filesystem/OwnedFileHandle.js")
+      >("../../../src/filesystem/OwnedFileHandle.js");
+      return {
+        ...actual,
+        OwnedFileHandle: class MockOwnedFileHandle
+          extends actual.OwnedFileHandle
+        {
+          override async close(): Promise<void> {
+            if (closeFailures > 0) {
+              closeFailures--;
+              throw new Error("synthetic handle close failure");
+            }
+            return super.close();
+          }
+        },
+      };
+    });
+
+    try {
+      const { CutterBridgeClient: RetryingClient } =
+        await import("../../../src/cutter/CutterBridgeClient.js");
+      const client = new RetryingClient({
+        REA_CUTTER_BRIDGE_DIR: directory,
+      });
+
+      const descriptors = await client.listDescriptors();
+      expect(descriptors).toHaveLength(1);
+      expect(client.retainedDescriptorCount).toBe(1);
+
+      const cleanup = await client.retryCleanup();
+      expect(cleanup.ok).toBe(true);
+      expect(client.retainedDescriptorCount).toBe(0);
+    } finally {
+      vi.doUnmock("../../../src/filesystem/OwnedFileHandle.js");
+      await vi.resetModules();
+    }
   });
 });

@@ -17,7 +17,7 @@ import {
 import { CUTTER_PROVIDER_IDENTITY } from "./CutterBridgeClient.js";
 
 interface CutterBridgePort {
-  listSessions(): Promise<CutterBridgeDiscovery>;
+  listSessions(signal?: AbortSignal): Promise<CutterBridgeDiscovery>;
   confirmCommandCompletion?(
     sessionId: string,
     requestId: string,
@@ -30,6 +30,7 @@ interface CutterBridgePort {
     readonly json: boolean;
     readonly signal?: AbortSignal;
   }): Promise<CutterBridgeExecution>;
+  retryCleanup?(): Promise<Result<null, AnalysisError>>;
 }
 
 /** Shared Cutter bridge workflows used by the MCP adapter and CLI. */
@@ -57,6 +58,10 @@ export class CutterBridgeService {
   }
 
   async #retryPendingCleanup(): Promise<Result<null, AnalysisError>> {
+    if (typeof this.client.retryCleanup === "function") {
+      const clientCleanup = await this.client.retryCleanup();
+      if (!clientCleanup.ok) return clientCleanup;
+    }
     for (const [requestId, pending] of this.#pendingCleanup) {
       const confirmCommandCompletion = this.client.confirmCommandCompletion;
       if (confirmCommandCompletion === undefined) return err(pending.failure);
@@ -74,8 +79,10 @@ export class CutterBridgeService {
     return ok(null);
   }
 
-  listSessions(): Promise<CutterBridgeDiscovery> {
-    return this.client.listSessions();
+  listSessions(
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<CutterBridgeDiscovery> {
+    return this.client.listSessions(options.signal);
   }
 
   async execute(
