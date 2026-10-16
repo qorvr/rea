@@ -19,6 +19,7 @@ import {
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readRustBinaryImage } from "./RustBinaryImage.js";
 import {
@@ -149,6 +150,22 @@ const failureFor = (
   signal?: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+    const cleanup = new ProviderCleanupError(
+      RUST_BINARY_PROVIDER_IDENTITY.id,
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { operation: OPERATION, cause },
+    );
+    if (signal?.aborted)
+      return new AnalysisCancelledError(OPERATION, {
+        cause: new AggregateError(
+          [new AnalysisCancelledError(OPERATION), cleanup],
+          "Cancelled with cleanup",
+        ),
+      });
+    return cleanup;
+  }
   if (signal?.aborted) return new AnalysisCancelledError(OPERATION);
   if (cause instanceof RustAuditableResourceFailure)
     return new AnalysisResourceConstraintError(

@@ -8,10 +8,14 @@ import type {
   AnalysisCleanupObservation,
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly cleanup?: AnalysisCleanupObservation;
   readonly partialObservation?: AnalysisPartialObservation;
+  readonly owner?: OwnedFileHandle;
+  readonly outcome?: RegularFileOperationOutcome<unknown>;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -132,6 +136,8 @@ export interface ArtifactReader {
 export class ArtifactReaderFailure extends Error {
   readonly cleanup: AnalysisCleanupObservation | undefined;
   readonly partialObservation: AnalysisPartialObservation | undefined;
+  readonly owner: OwnedFileHandle | undefined;
+  readonly outcome: RegularFileOperationOutcome<unknown> | undefined;
 
   constructor(
     readonly reason:
@@ -155,6 +161,8 @@ export class ArtifactReaderFailure extends Error {
     this.name = "ArtifactReaderFailure";
     this.cleanup = options?.cleanup;
     this.partialObservation = options?.partialObservation;
+    this.owner = options?.owner;
+    this.outcome = options?.outcome;
   }
 
   /** Preserve the primary failure while attaching cleanup and any complete observation. */
@@ -162,21 +170,31 @@ export class ArtifactReaderFailure extends Error {
     cause: unknown,
     cleanup: AnalysisCleanupObservation,
     partialObservation?: AnalysisPartialObservation,
+    owner?: OwnedFileHandle,
+    outcome?: RegularFileOperationOutcome<unknown>,
   ): ArtifactReaderFailure {
     const primary =
       cause instanceof ArtifactReaderFailure
         ? cause
-        : new ArtifactReaderFailure("io", errorMessage(cause), { cause });
+        : new ArtifactReaderFailure("io", errorMessage(cause), {
+            cause,
+            ...(owner === undefined ? {} : { owner }),
+            ...(outcome === undefined ? {} : { outcome }),
+          });
     const mergedObservation = partialObservation ?? primary.partialObservation;
+    const mergedOwner = owner ?? primary.owner;
+    const mergedOutcome = outcome ?? primary.outcome;
     return new ArtifactReaderFailure(
       primary.reason,
       primary.message,
       {
-        cause: primary,
+        cause: cause instanceof ArtifactReaderFailure ? primary : cause,
         cleanup: combineCleanup(primary.cleanup, cleanup),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),
+        ...(mergedOwner === undefined ? {} : { owner: mergedOwner }),
+        ...(mergedOutcome === undefined ? {} : { outcome: mergedOutcome }),
       },
       primary.details,
     );
