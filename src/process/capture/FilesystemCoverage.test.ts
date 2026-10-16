@@ -1,5 +1,6 @@
 import {
   chmod,
+  lstat,
   mkdir,
   readFile,
   rm,
@@ -392,4 +393,56 @@ it("preserves creation when the selected root was observed missing before captur
       after: { type: "file" },
     },
   ]);
+});
+
+it.skipIf(process.platform === "win32")(
+  "records identity_changed and truncation when a symlink is removed during readlink",
+  async () => {
+    const root = await createTestTempDirectory("rea-fs-symlink-race-");
+    const link = join(root, "race-link");
+    await symlink("target", link);
+    const scenario = parseProcessScenario({
+      executable: process.execPath,
+      working_directory: root,
+      filesystem_observation_paths: [root],
+      limits: { file_bytes: 1 },
+    });
+    const snapshot = await snapshotRoots(scenario, undefined, undefined, {
+      readlink: async () => {
+        throw Object.assign(new Error("ENOENT: no such file or directory"), {
+          code: "ENOENT",
+        });
+      },
+    });
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.coverage.enumeration_reasons).toContain("identity_changed");
+  },
+);
+
+it("records identity_changed and truncation when a directory is removed before post-read validation", async () => {
+  const root = await createTestTempDirectory("rea-fs-dir-race-");
+  const sub = join(root, "subdir");
+  await mkdir(sub);
+  const scenario = parseProcessScenario({
+    executable: process.execPath,
+    working_directory: root,
+    filesystem_observation_paths: [root],
+    limits: { file_bytes: 1 },
+  });
+  let callCount = 0;
+  const snapshot = await snapshotRoots(scenario, undefined, undefined, {
+    lstat: async (p) => {
+      if (p === sub) {
+        callCount += 1;
+        if (callCount > 1) {
+          throw Object.assign(new Error("ENOENT: no such file or directory"), {
+            code: "ENOENT",
+          });
+        }
+      }
+      return await lstat(p);
+    },
+  });
+  expect(snapshot.truncated).toBe(true);
+  expect(snapshot.coverage.enumeration_reasons).toContain("identity_changed");
 });

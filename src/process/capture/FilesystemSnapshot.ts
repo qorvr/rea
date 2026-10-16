@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import type { FilesystemCoverage } from "../../domain/process/processCaptureCoverage.js";
-import type { Stats } from "node:fs";
+import type { Dir, Stats } from "node:fs";
 import type {
   FileState,
   ProcessFilesystemSnapshot,
@@ -13,9 +13,10 @@ import type {
 
 const hasSameIdentity = (
   before: Stats,
-  after: Stats,
+  after: Stats | undefined,
   expected: "directory" | "symlink",
 ): boolean =>
+  after !== undefined &&
   before.dev === after.dev &&
   before.ino === after.ino &&
   (expected === "directory" ? after.isDirectory() : after.isSymbolicLink());
@@ -42,19 +43,28 @@ const fileUnavailableSystemCode = (cause: unknown): string | undefined => {
       "ENOENT",
       "EPERM",
       "ESTALE",
+      "EINVAL",
     ].includes(code)
     ? code
     : undefined;
 };
 
+export interface SnapshotRootsFsOperations {
+  readonly lstat?: (path: string) => Promise<Stats>;
+  readonly readlink?: (path: string) => Promise<string>;
+  readonly opendir?: (path: string) => Promise<Dir>;
+  readonly open?: (path: string, flags?: number) => Promise<FileHandle>;
+}
+
 const lstatIfPresent = async (
   path: string,
   previouslyObservedRoot = false,
   signal?: AbortSignal,
+  lstatFn: (path: string) => Promise<Stats> = lstat,
 ): Promise<Stats | undefined> => {
   signal?.throwIfAborted();
   try {
-    const stats = await lstat(path);
+    const stats = await lstatFn(path);
     signal?.throwIfAborted();
     return stats;
   } catch (cause: unknown) {
@@ -86,13 +96,16 @@ export const hashFile = async (
   expected: Stats,
   maxBytes: number,
   signal?: AbortSignal,
+  fsOperations: SnapshotRootsFsOperations = {},
 ): Promise<FileHashOutcome> => {
   signal?.throwIfAborted();
+  const openFn = fsOperations.open ?? open;
+  const lstatFn = fsOperations.lstat ?? lstat;
   const noFollowAvailable =
     typeof fsConstants.O_NOFOLLOW === "number" && fsConstants.O_NOFOLLOW !== 0;
   let handle: FileHandle;
   try {
-    handle = await open(
+    handle = await openFn(
       path,
       fsConstants.O_RDONLY |
         (noFollowAvailable ? fsConstants.O_NOFOLLOW : 0) |
@@ -113,7 +126,7 @@ export const hashFile = async (
     // On hosts without O_NOFOLLOW, compare the leaf's identity with the
     // captured regular file. Ancestor aliases do not change file identity.
     if (!noFollowAvailable) {
-      const named = await lstat(path);
+      const named = await lstatFn(path);
       signal?.throwIfAborted();
       if (!hasSameFileState(expected, named))
         return {
@@ -154,7 +167,7 @@ export const hashFile = async (
     signal?.throwIfAborted();
     let unchanged = hasSameFileState(stats, after);
     if (unchanged && !noFollowAvailable) {
-      const namedAfter = await lstat(path);
+      const namedAfter = await lstatFn(path);
       signal?.throwIfAborted();
       unchanged = hasSameFileState(after, namedAfter);
     }
@@ -184,7 +197,11 @@ export const snapshotRoots = async (
   scenario: ProcessScenario,
   signal?: AbortSignal,
   previous?: ProcessFilesystemSnapshot,
+  fsOperations: SnapshotRootsFsOperations = {},
 ): Promise<ProcessFilesystemSnapshot> => {
+  const lstatFn = fsOperations.lstat ?? lstat;
+  const readlinkFn = fsOperations.readlink ?? readlink;
+  const opendirFn = fsOperations.opendir ?? opendir;
   // A prior root entry establishes same-run admission. Preserve initial
   // obstruction errors; a later non-directory ancestor makes it absent.
   const previousPaths = new Set(previous?.files.map(({ path }) => path));
@@ -220,13 +237,24 @@ export const snapshotRoots = async (
       path,
       previousPaths.has(`${rootAlias}:.`),
       signal,
+      lstatFn,
     );
     if (stats === undefined) return true;
     const relativePath = relative(root, path) || ".";
     if (stats.isSymbolicLink()) {
       // Keep the target as stored: lexical resolution can merge distinct targets.
-      const target = await readlink(path);
-      const afterRead = await lstat(path);
+      let target: string;
+      try {
+        target = await readlinkFn(path);
+      } catch (cause: unknown) {
+        signal?.throwIfAborted();
+        const systemCode = fileUnavailableSystemCode(cause);
+        if (systemCode === undefined) throw cause;
+        truncated = true;
+        enumerationReasons.add("identity_changed");
+        return false;
+      }
+      const afterRead = await lstatIfPresent(path, true, signal, lstatFn);
       if (!hasSameIdentity(stats, afterRead, "symlink")) {
         truncated = true;
         enumerationReasons.add("identity_changed");
@@ -254,7 +282,13 @@ export const snapshotRoots = async (
           system_code: null,
         };
       } else {
-        const outcome = await hashFile(path, stats, remainingBytes, signal);
+        const outcome = await hashFile(
+          path,
+          stats,
+          remainingBytes,
+          signal,
+          fsOperations,
+        );
         if (outcome.state === "hashed") {
           sha256 = outcome.sha256;
           remainingBytes -= stats.size;
@@ -298,7 +332,7 @@ export const snapshotRoots = async (
       scenario.limits.files - entries.length - pendingNames;
     let directory;
     try {
-      directory = await opendir(path);
+      directory = await opendirFn(path);
     } catch (cause: unknown) {
       signal?.throwIfAborted();
       const systemCode = fileUnavailableSystemCode(cause);
@@ -313,24 +347,40 @@ export const snapshotRoots = async (
       });
       return false;
     }
-    for await (const child of directory) {
-      signal?.throwIfAborted();
-      if (
-        children.length >= remainingEntries ||
-        depth >= scenario.limits.filesystem_depth
-      ) {
-        truncated = true;
-        complete = false;
-        if (children.length >= remainingEntries)
-          enumerationReasons.add("files_limit");
-        if (depth >= scenario.limits.filesystem_depth)
-          enumerationReasons.add("depth_limit");
-        break;
+    try {
+      for await (const child of directory) {
+        signal?.throwIfAborted();
+        if (
+          children.length >= remainingEntries ||
+          depth >= scenario.limits.filesystem_depth
+        ) {
+          truncated = true;
+          complete = false;
+          if (children.length >= remainingEntries)
+            enumerationReasons.add("files_limit");
+          if (depth >= scenario.limits.filesystem_depth)
+            enumerationReasons.add("depth_limit");
+          break;
+        }
+        children.push(child.name);
+        pendingNames += 1;
       }
-      children.push(child.name);
-      pendingNames += 1;
+    } catch (cause: unknown) {
+      signal?.throwIfAborted();
+      const systemCode = fileUnavailableSystemCode(cause);
+      if (systemCode === undefined) throw cause;
+      pendingNames -= children.length;
+      truncated = true;
+      complete = false;
+      enumerationReasons.add("directory_unavailable");
+      enumerationOmissions.push({
+        path: `${rootAlias}:${relativePath}`,
+        reason: "directory_unavailable",
+        system_code: systemCode,
+      });
+      return false;
     }
-    const afterRead = await lstat(path);
+    const afterRead = await lstatIfPresent(path, true, signal, lstatFn);
     if (!hasSameIdentity(stats, afterRead, "directory")) {
       pendingNames -= children.length;
       truncated = true;
@@ -350,8 +400,12 @@ export const snapshotRoots = async (
   for (const [index, root] of scenario.filesystem_observation_paths.entries()) {
     const alias = `root_${String(index)}`;
     if (
-      (await lstatIfPresent(root, previousPaths.has(`${alias}:.`), signal)) ===
-      undefined
+      (await lstatIfPresent(
+        root,
+        previousPaths.has(`${alias}:.`),
+        signal,
+        lstatFn,
+      )) === undefined
     ) {
       completeRoots.push(alias);
       continue;
