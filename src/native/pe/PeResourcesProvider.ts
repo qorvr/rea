@@ -29,26 +29,26 @@ export class PeResourcesProvider implements PeResourcesPort {
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {
     try {
-      const snapshot = await this.#resources.run(() =>
-        readStableArtifact(
-          input.path,
-          input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        ),
-      );
       return ok(
-        await parsePeResources(
-          snapshot.bytes,
-          {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
-          },
-          input,
-          options?.signal,
-        ),
+        await this.#resources.run(async () => {
+          const snapshot = await readStableArtifact(
+            input.path,
+            input.max_file_bytes,
+            options?.signal,
+            undefined,
+            this.#resources,
+          );
+          return await parsePeResources(
+            snapshot.bytes,
+            {
+              path: input.path,
+              sha256: snapshot.sha256,
+              bytes: snapshot.bytes.length,
+            },
+            input,
+            options?.signal,
+          );
+        }),
       );
     } catch (cause) {
       return err(peResourcesFailure(cause, input, options?.signal));
