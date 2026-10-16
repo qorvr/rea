@@ -5,6 +5,10 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 
 interface OwnedConnection {
   readonly connection: CdpConnection;
@@ -16,11 +20,16 @@ interface OwnedConnection {
   cleanup: (() => Promise<void>) | undefined;
   cleanupAttempted: boolean;
   failure: ProviderCleanupError | undefined;
+  readonly lease: AnalysisCleanupLease;
 }
 
 /** Retains exact REA-owned CDP transports until their close is observed. */
 export class CdpTargetSessionOwner {
   readonly #connections = new Map<CdpConnection, OwnedConnection>();
+  readonly #errorLeases = new WeakMap<
+    AnalysisError,
+    Set<AnalysisCleanupLease>
+  >();
   #closing = false;
   #admissions = 0;
   #closePromise: Promise<void> | undefined;
@@ -74,8 +83,15 @@ export class CdpTargetSessionOwner {
         if (
           cause instanceof AnalysisError &&
           cleanupCause instanceof AnalysisError
-        )
-          throw analysisErrorWithCleanupFailure(cause, cleanupCause, operation);
+        ) {
+          const combined = analysisErrorWithCleanupFailure(
+            cause,
+            cleanupCause,
+            operation,
+          );
+          this.bindCleanupError(combined, cleanupCause);
+          throw combined;
+        }
         throw new AggregateError(
           [cause, cleanupCause],
           `CDP operation ${operation} failed during handshake and cleanup remains incomplete.`,
@@ -102,6 +118,7 @@ export class CdpTargetSessionOwner {
     const settled = new Promise<void>((resolve) => {
       settle = resolve;
     });
+    const lease = new AnalysisCleanupLease(async () => undefined);
     this.#connections.set(connection, {
       connection,
       operation,
@@ -112,6 +129,7 @@ export class CdpTargetSessionOwner {
       cleanup: undefined,
       cleanupAttempted: false,
       failure: undefined,
+      lease,
     });
   }
 
@@ -131,9 +149,11 @@ export class CdpTargetSessionOwner {
       }
       await connection.close();
       this.#connections.delete(connection);
+      await record.lease.release();
     } catch (cause: unknown) {
       const failure = cleanupError(record, cause);
       record.failure = failure;
+      this.#bindErrorToLease(failure, record.lease);
       throw failure;
     } finally {
       record.active = false;
@@ -154,19 +174,27 @@ export class CdpTargetSessionOwner {
   /** Retry retained failures without touching concurrently active sessions. */
   async retryPending(): Promise<void> {
     const failures: AnalysisError[] = [];
+    const failedLeases: AnalysisCleanupLease[] = [];
     for (const record of this.#connections.values()) {
       if (record.active || record.failure === undefined) continue;
       try {
         await record.connection.close();
         this.#connections.delete(record.connection);
+        await record.lease.release();
       } catch (cause: unknown) {
         const failure = cleanupError(record, cause);
         record.failure = failure;
+        this.#bindErrorToLease(failure, record.lease);
         failures.push(failure);
+        failedLeases.push(record.lease);
       }
     }
     if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw aggregateCleanupFailures(failures);
+    if (failures.length > 1) {
+      const aggregate = aggregateCleanupFailures(failures);
+      this.#bindAggregateError(aggregate, failedLeases);
+      throw aggregate;
+    }
   }
 
   async #closeAll(): Promise<void> {
@@ -180,18 +208,88 @@ export class CdpTargetSessionOwner {
       await Promise.all(active.map(({ settled }) => settled));
     }
     const failures: AnalysisError[] = [];
+    const failedLeases: AnalysisCleanupLease[] = [];
     for (const record of this.#connections.values()) {
       try {
         await record.connection.close();
         this.#connections.delete(record.connection);
+        await record.lease.release();
       } catch (cause: unknown) {
         const failure = cleanupError(record, cause);
         record.failure = failure;
+        this.#bindErrorToLease(failure, record.lease);
         failures.push(failure);
+        failedLeases.push(record.lease);
       }
     }
     if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw aggregateCleanupFailures(failures);
+    if (failures.length > 1) {
+      const aggregate = aggregateCleanupFailures(failures);
+      this.#bindAggregateError(aggregate, failedLeases);
+      throw aggregate;
+    }
+  }
+
+  #bindErrorToLease(error: AnalysisError, lease: AnalysisCleanupLease): void {
+    lease.bindCleanupError(error);
+    let leases = this.#errorLeases.get(error);
+    if (leases === undefined) {
+      leases = new Set();
+      this.#errorLeases.set(error, leases);
+    }
+    leases.add(lease);
+  }
+
+  #bindAggregateError(
+    error: AnalysisError,
+    leases: readonly AnalysisCleanupLease[],
+  ): void {
+    const first = leases[0];
+    if (leases.length === 1 && first !== undefined) {
+      this.#bindErrorToLease(error, first);
+      return;
+    }
+    new AnalysisCleanupLeaseGroup(error, leases);
+    let errorLeases = this.#errorLeases.get(error);
+    if (errorLeases === undefined) {
+      errorLeases = new Set();
+      this.#errorLeases.set(error, errorLeases);
+    }
+    for (const lease of leases) errorLeases.add(lease);
+  }
+
+  #findLeases(source?: unknown): readonly AnalysisCleanupLease[] {
+    if (source instanceof AnalysisError) {
+      const direct = this.#errorLeases.get(source);
+      if (direct !== undefined && direct.size > 0) return [...direct];
+      if (source.cause !== undefined) {
+        const fromCause = this.#findLeases(source.cause);
+        if (fromCause.length > 0) return fromCause;
+      }
+    }
+    if (source instanceof CdpConnection) {
+      const record = this.#connections.get(source);
+      if (record !== undefined) return [record.lease];
+    }
+    if (Array.isArray(source)) {
+      const leases = new Set<AnalysisCleanupLease>();
+      for (const item of source) {
+        for (const lease of this.#findLeases(item)) leases.add(lease);
+      }
+      if (leases.size > 0) return [...leases];
+    }
+    const failed = [...this.#connections.values()]
+      .filter((record) => record.failure !== undefined)
+      .map((record) => record.lease);
+    if (failed.length > 0) return failed;
+    return [...this.#connections.values()].map((record) => record.lease);
+  }
+
+  /** Bind a caller-visible cleanup error or aggregate to its exact socket owners. */
+  bindCleanupError(error: AnalysisError, source?: unknown): void {
+    const leases = this.#findLeases(source);
+    if (leases.length === 0) return;
+    this.#bindAggregateError(error, leases);
   }
 }
 

@@ -192,38 +192,40 @@ export class CdpElectronProvider implements ElectronObservationPort {
           })
         : undefined;
     if (cleanupFailure !== undefined) {
-      if (finalCancellation !== undefined)
-        return err(
-          analysisErrorWithCleanupFailure(
-            finalCancellation,
-            cleanupFailure,
-            "inspect_electron_page",
-          ),
+      if (finalCancellation !== undefined) {
+        const combined = analysisErrorWithCleanupFailure(
+          finalCancellation,
+          cleanupFailure,
+          "inspect_electron_page",
         );
-      if (!result.ok)
-        return err(
-          analysisErrorWithCleanupFailure(
-            result.error,
-            cleanupFailure,
-            "inspect_electron_page",
-          ),
+        this.#owner.bindCleanupError(combined, cleanupFailure);
+        return err(combined);
+      }
+      if (!result.ok) {
+        const combined = analysisErrorWithCleanupFailure(
+          result.error,
+          cleanupFailure,
+          "inspect_electron_page",
         );
-      return err(
-        new ProviderCleanupError(
-          CDP_ELECTRON_PROVIDER_IDENTITY.id,
-          cleanupFailure.cleanupResources,
-          { cleanup_error: cleanupFailure.message },
-          {
-            operation: "inspect_electron_page",
-            cause: cleanupFailure,
-            partialObservation: {
-              kind: "electron-page-observation",
-              inspection: result.value,
-              cleanup: "incomplete",
-            },
+        this.#owner.bindCleanupError(combined, cleanupFailure);
+        return err(combined);
+      }
+      const finalError = new ProviderCleanupError(
+        CDP_ELECTRON_PROVIDER_IDENTITY.id,
+        cleanupFailure.cleanupResources,
+        { cleanup_error: cleanupFailure.message },
+        {
+          operation: "inspect_electron_page",
+          cause: cleanupFailure,
+          partialObservation: {
+            kind: "electron-page-observation",
+            inspection: result.value,
+            cleanup: "incomplete",
           },
-        ),
+        },
       );
+      this.#owner.bindCleanupError(finalError, cleanupFailure);
+      return err(finalError);
     }
     if (!result.ok) return result;
     if (finalCancellation !== undefined) return err(finalCancellation);

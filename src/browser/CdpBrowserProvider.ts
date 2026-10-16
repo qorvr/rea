@@ -420,19 +420,20 @@ const withTargetSession = async <
     );
 
   if (cleanupFailure !== undefined) {
-    if (!outcome.ok && outcome.error instanceof AnalysisError)
-      throw analysisErrorWithCleanupFailure(
-        outcome.error,
+    if (!outcome.ok) {
+      const primaryError =
+        outcome.error instanceof AnalysisError
+          ? outcome.error
+          : providerError(outcome.error, operation, options.signal);
+      const combined = analysisErrorWithCleanupFailure(
+        primaryError,
         cleanupFailure,
         operation,
       );
-    if (!outcome.ok)
-      throw new AggregateError(
-        [outcome.error, cleanupFailure],
-        `CDP operation ${operation} failed and cleanup remains incomplete.`,
-        { cause: outcome.error },
-      );
-    throw new ProviderCleanupError(
+      owner.bindCleanupError(combined, cleanupFailure);
+      throw combined;
+    }
+    const finalError = new ProviderCleanupError(
       "rea-cdp-browser",
       cleanupFailure.cleanupResources,
       { cleanup_error: cleanupFailure.message },
@@ -444,6 +445,8 @@ const withTargetSession = async <
           : { partialObservation: partialObservation(outcome.value) }),
       },
     );
+    owner.bindCleanupError(finalError, cleanupFailure);
+    throw finalError;
   }
   if (!outcome.ok) throw outcome.error;
   return outcome.value;

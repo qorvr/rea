@@ -109,21 +109,22 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
         result.ok ? undefined : result.error,
         group,
       );
-      if (failure !== undefined)
-        return err(
-          result.ok
-            ? options.signal?.aborted === true
-              ? analysisErrorWithCleanupFailure(
-                  new AnalysisCancelledError(operation, {
-                    cause: options.signal.reason,
-                    partialObservation: result.value,
-                  }),
-                  failure,
-                  operation,
-                )
-              : failure.retainPartialObservation(result.value)
-            : analysisErrorWithCleanupFailure(result.error, failure, operation),
-        );
+      if (failure !== undefined) {
+        const error = result.ok
+          ? options.signal?.aborted === true
+            ? analysisErrorWithCleanupFailure(
+                new AnalysisCancelledError(operation, {
+                  cause: options.signal.reason,
+                  partialObservation: result.value,
+                }),
+                failure,
+                operation,
+              )
+            : failure.retainPartialObservation(result.value)
+          : analysisErrorWithCleanupFailure(result.error, failure, operation);
+        this.#owner.bindCleanupError(error, failure);
+        return err(error);
+      }
     }
     if (result.ok && options.signal?.aborted === true)
       return err(

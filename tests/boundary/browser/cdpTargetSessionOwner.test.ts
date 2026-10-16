@@ -4,7 +4,10 @@ import { WebSocket, WebSocketServer } from "ws";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { CdpTargetSessionOwner } from "../../../src/browser/CdpTargetSessionOwner.js";
-import type { CdpConnection } from "../../../src/browser/CdpConnection.js";
+import { CdpConnection } from "../../../src/browser/CdpConnection.js";
+import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 
@@ -155,4 +158,168 @@ it("accepts asynchronous terminate success only after the close event", async ()
   }
   await owner.close();
   await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+});
+
+it("clears returned inspection and shutdown cleanup status only after socket release", async () => {
+  const browser = await startFakeCdpBrowser();
+  const provider = new CdpBrowserProvider();
+  const originalClose = CdpConnection.prototype.close;
+  let denied = true;
+  const closing = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return denied
+        ? Promise.reject(new Error("controlled transport close failure"))
+        : originalClose.call(this);
+    });
+  onTestFinished(async () => {
+    closing.mockRestore();
+    await provider.close();
+    await browser.close();
+  });
+  const result = await provider.inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (result.ok) throw new Error("Expected retained socket cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.partialObservation).toBeDefined();
+  const observation = result.error.partialObservation;
+  const retry = await provider.close().catch((cause: unknown) => cause);
+  expect(retry).toBeInstanceOf(AnalysisError);
+  if (!(retry instanceof AnalysisError))
+    throw new Error("Missing retry failure");
+  expect(retry.cleanupIncomplete).toBe(true);
+  expect(browser.activeConnectionCount()).toBe(1);
+  denied = false;
+  await provider.close();
+  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(retry.cleanupIncomplete).toBe(false);
+  expect(result.error.partialObservation).toBe(observation);
+  expect(browser.commands.map(({ method }) => method)).not.toContain(
+    "Browser.close",
+  );
+  expect(browser.commands.map(({ method }) => method)).not.toContain(
+    "Target.closeTarget",
+  );
+});
+
+it("retains cleanupIncomplete for unresolved socket while resolving released socket in mixed outcome", async () => {
+  const browser = await startFakeCdpBrowser();
+  const owner = new CdpTargetSessionOwner();
+  const originalClose = CdpConnection.prototype.close;
+  const deniedSockets = new Set<CdpConnection>();
+
+  const closing = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return deniedSockets.has(this)
+        ? Promise.reject(new Error("controlled transport close failure"))
+        : originalClose.call(this);
+    });
+
+  onTestFinished(async () => {
+    closing.mockRestore();
+    await owner.close().catch(() => undefined);
+    await browser.close();
+  });
+
+  const c1 = await owner.connect(
+    browser.browserWebSocketUrl,
+    "inspect_web_page",
+    {},
+    "socket-1",
+  );
+  const c2 = await owner.connect(
+    browser.browserWebSocketUrl,
+    "inspect_web_page",
+    {},
+    "socket-2",
+  );
+
+  deniedSockets.add(c1);
+  deniedSockets.add(c2);
+
+  const err1 = await owner.finish(c1).catch((cause: unknown) => cause);
+  const err2 = await owner.finish(c2).catch((cause: unknown) => cause);
+
+  expect(err1).toBeInstanceOf(AnalysisError);
+  expect(err2).toBeInstanceOf(AnalysisError);
+  expect((err1 as AnalysisError).cleanupIncomplete).toBe(true);
+  expect((err2 as AnalysisError).cleanupIncomplete).toBe(true);
+
+  // Both fail on initial retry, producing an aggregate error
+  const retryAll = await owner.close().catch((cause: unknown) => cause);
+  expect(retryAll).toBeInstanceOf(AnalysisError);
+  expect((retryAll as AnalysisError).cleanupIncomplete).toBe(true);
+
+  // Allow socket 1 to release, but keep socket 2 failing
+  deniedSockets.delete(c1);
+  const retry2 = await owner.close().catch((cause: unknown) => cause);
+  expect(retry2).toBeInstanceOf(AnalysisError);
+  expect((retry2 as AnalysisError).cleanupIncomplete).toBe(true);
+
+  // Socket 1 is released, so err1 must now be resolved (cleanupIncomplete === false)
+  expect((err1 as AnalysisError).cleanupIncomplete).toBe(false);
+
+  // Socket 2 is still failing, so err2, retryAll, and retry2 must remain cleanupIncomplete === true
+  expect((err2 as AnalysisError).cleanupIncomplete).toBe(true);
+  expect((retryAll as AnalysisError).cleanupIncomplete).toBe(true);
+  expect((retry2 as AnalysisError).cleanupIncomplete).toBe(true);
+
+  // Now allow socket 2 to release
+  deniedSockets.delete(c2);
+  await owner.close();
+
+  // All errors covering socket 2 and the aggregate must now be resolved
+  expect((err2 as AnalysisError).cleanupIncomplete).toBe(false);
+  expect((retryAll as AnalysisError).cleanupIncomplete).toBe(false);
+  expect((retry2 as AnalysisError).cleanupIncomplete).toBe(false);
+});
+
+it("preserves primary analysis failure when cleanup failure resolves after socket release", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandError: (command) =>
+      command.method === "Runtime.enable"
+        ? { code: -32000, message: "controlled primary failure" }
+        : undefined,
+  });
+  const provider = new CdpBrowserProvider();
+  const originalClose = CdpConnection.prototype.close;
+  let denied = true;
+  const closing = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return denied
+        ? Promise.reject(new Error("controlled transport close failure"))
+        : originalClose.call(this);
+    });
+  onTestFinished(async () => {
+    closing.mockRestore();
+    await provider.close().catch(() => undefined);
+    await browser.close();
+  });
+
+  const result = await provider.inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (result.ok) throw new Error("Expected failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+
+  denied = false;
+  await provider.close();
+
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.diagnostics?.primary_error).toBeDefined();
+  expect(JSON.stringify(result.error)).toContain("controlled primary failure");
 });
